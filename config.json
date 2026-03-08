@@ -1,0 +1,19 @@
+{
+    "symbol": "XAUUSD",
+    "volume": 0.01,
+    "sl": 2000,
+    "tp": 3000,
+    "tele_token": "8506143544:AAHAgMZv6CjQCFmd-k1e_L46x2di0Ob60Vg",
+    "tele_id": "6440690356",
+    "bb_period": "20",
+    "bb_dev": "2.0",
+    "ema_fast": "10",
+    "ema_slow": "50",
+    "rsi_period": "14",
+    "rsi_buy": "30",
+    "rsi_sell": "70",
+    "tele_chat_id": "6440690356",
+    "risk_percent": "1.0",
+    "sl_points": "2000",
+    "tp_points": "4000"
+}
