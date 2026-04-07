@@ -22,7 +22,7 @@ class PenguLoader(ctk.CTk):
     def __init__(self):
         super().__init__()
         
-        self.title("Gold Pro V6.6 (Background Fix)")
+        self.title("Gold Pro V7.0 (Multi-Sandbox)") # Lên đời version
         self.geometry("950x700")
         self.resizable(True, True)
         
@@ -35,7 +35,7 @@ class PenguLoader(ctk.CTk):
         self.dynamic_inputs = {} 
         self.plugin_checkboxes = {}
         self.saved_states = {} 
-        self.tray_icon = None # Biến lưu icon
+        self.tray_icon = None
 
         # GUI SETUP
         self.tabview = ctk.CTkTabview(self)
@@ -47,7 +47,7 @@ class PenguLoader(ctk.CTk):
         # TAB HOME
         self.frame_home = ctk.CTkFrame(self.tab_home, fg_color="transparent")
         self.frame_home.pack(fill="both", expand=True)
-        ctk.CTkLabel(self.frame_home, text="CORE KERNEL V6.6", font=("Roboto", 24, "bold")).pack(pady=20)
+        ctk.CTkLabel(self.frame_home, text="QUANT KERNEL V7.0", font=("Roboto", 24, "bold")).pack(pady=20)
         self.lbl_status = ctk.CTkLabel(self.frame_home, text="SYSTEM STOPPED", font=("Arial", 16), text_color="gray")
         self.lbl_status.pack(pady=10)
         self.btn_power = ctk.CTkButton(self.frame_home, text="START ENGINE", height=60, width=250, 
@@ -113,7 +113,6 @@ class PenguLoader(ctk.CTk):
             if var.get():
                 mod = utils.load_plugin_module(name)
                 if not mod:
-                    ctk.CTkLabel(self.scroll_settings, text=f"❌ LỖI FILE: {name}", text_color="red").pack()
                     continue
 
                 group = ctk.CTkFrame(self.scroll_settings)
@@ -173,8 +172,7 @@ class PenguLoader(ctk.CTk):
         symbol = "XAUUSD"
         while self.is_running:
             try:
-                # Trading Logic
-                rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, 100)
+                rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, 100) # Đã ép cứng về M5
                 acc_info = mt5.account_info()
                 
                 current_price = 0
@@ -183,11 +181,9 @@ class PenguLoader(ctk.CTk):
                     df['time'] = pd.to_datetime(df['time'], unit='s')
                     current_price = df.iloc[-1]['close']
                     
-                    # Cập nhật Title (Chỉ cập nhật nếu cửa sổ đang hiện)
-                    # Nếu đang ẩn thì không cần cập nhật title để tránh lỗi thread
                     try:
                         if self.state() == "normal":
-                            self.title(f"Gold Pro V6.6 - {current_price}")
+                            self.title(f"Gold Pro V7.0 (Multi-Sandbox) - {current_price}")
                     except: pass
                 
                 active_plugins = []
@@ -208,26 +204,60 @@ class PenguLoader(ctk.CTk):
                         if hasattr(mod, "on_tick"):
                             mod.on_tick(context)
 
+                # ========================================================
+                # LÕI XỬ LÝ HỘP RIÊNG (SANDBOX - MAGIC NUMBER)
+                # ========================================================
                 if rates is not None and self.switch_plugin_master.get() == "on":
                     strats = [m for m in active_plugins if hasattr(m, "analyze")]
                     risks = [m for m in active_plugins if hasattr(m, "calculate_risk")]
                     notifies = [m for m in active_plugins if hasattr(m, "send_message")]
 
-                    signal_time = df.iloc[-2]['time']
                     for s in strats:
+                        mod_name = s.__name__.split('.')[-1]
+                        
+                        # Đọc Magic từ config, nếu người dùng chưa cài thì tự sinh ra 1 số cố định
+                        magic = int(self.global_config.get(f"{mod_name}_magic", 200000 + abs(hash(mod_name)) % 10000))
+                        
+                        # [CHỐT CHẶN] - Kiểm tra xem Hộp này đang có lệnh gồng không?
+                        open_pos = mt5_handler.get_open_positions(symbol, magic)
+                        if open_pos and len(open_pos) > 0:
+                            # Hộp đang có lệnh, bỏ qua không cho phân tích nến nữa (Chống nhồi lệnh)
+                            continue 
+                        
+                        # Nếu rảnh rỗi, Hộp được phép phân tích biểu đồ
                         sig, cmt = s.analyze(df.copy(), self.global_config)
+                        
                         if sig:
                             vol, sl, tp, r_cmt = 0.01, 0, 0, ""
                             if risks:
+                                # Risk hiện tại vẫn dùng chung công thức, bài sau ta sẽ tách Risk ra
                                 vol, sl, tp, r_cmt = risks[0].calculate_risk(acc_info, sig, current_price, self.global_config)
                             
-                            full_cmt = f"{cmt} | {r_cmt}"
-                            res = mt5_handler.place_trade(symbol, mt5.ORDER_TYPE_BUY if sig=="BUY" else mt5.ORDER_TYPE_SELL, vol, current_price, sl, tp, full_cmt)
+                            full_cmt = f"[{mod_name}] {cmt} | {r_cmt}"
+                            action = mt5.ORDER_TYPE_BUY if sig=="BUY" else mt5.ORDER_TYPE_SELL
                             
-                            if res.retcode == mt5.TRADE_RETCODE_DONE:
-                                msg = f"✅ TRADE: {sig} {vol}L | {full_cmt}"
-                                self.log(msg)
-                                for n in notifies: n.send_message(msg, self.global_config)
+                            # Gửi lệnh lên sàn kèm thẻ Căn Cước (Magic Number)
+                            res = mt5_handler.place_trade(symbol, action, vol, current_price, sl, tp, full_cmt, magic)
+                            
+                            # Xử lý kết quả trả về đa định dạng siêu chuẩn
+                            if res and hasattr(res, 'retcode'):
+                                if res.retcode == mt5.TRADE_RETCODE_DONE:
+                                    msg = f"✅ HỘP [{magic}] VÀO LỆNH: {sig} {vol}L | {full_cmt}"
+                                    self.log(msg)
+                                    for n in notifies: n.send_message(msg, self.global_config)
+                                else:
+                                    self.log(f"🛑 SÀN TỪ CHỐI! Mã: {res.retcode} - Ghi chú: {res.comment}")
+                            
+                            elif type(res) is tuple:
+                                self.log(f"⚠️ MT5 CHẶN TỪ CỬA! Mã lỗi gốc: {res}")
+                                
+                            elif type(res) is str:
+                                # Dùng để in ra các cảnh báo bằng chữ (VD: Lỗi giãn Spread)
+                                self.log(f"🛡️ HỆ THỐNG CHẶN: {res}")
+                                
+                            else:
+                                # Bắt sống mọi thể loại dữ liệu dị thường
+                                self.log(f"❓ LỖI KHÔNG XÁC ĐỊNH LỌT LƯỚI! Dữ liệu thô: {res}")
                 
                 time.sleep(1)
             except Exception as e:
@@ -239,14 +269,12 @@ class PenguLoader(ctk.CTk):
         except: pass
     
     def log(self, msg):
-        # Dùng after để update GUI an toàn từ thread khác
         t = datetime.now().strftime("%H:%M:%S")
         self.after(0, lambda: self.log_box.insert("end", f"[{t}] {msg}\n") or self.log_box.see("end"))
     
-    # --- LOGIC TRAY ICON (ĐÃ FIX ĐỂ KHÔNG CHẶN BOT) ---
     def show_window(self, icon, item):
-        self.tray_icon.stop() # Dừng icon để trả lại luồng
-        self.after(0, self.deiconify) # Hiện lại cửa sổ
+        self.tray_icon.stop() 
+        self.after(0, self.deiconify) 
 
     def quit_app(self, icon, item):
         self.tray_icon.stop()
@@ -255,17 +283,9 @@ class PenguLoader(ctk.CTk):
         sys.exit()
 
     def hide_to_tray(self):
-        self.withdraw() # Ẩn cửa sổ
-        
-        # Load ảnh
-        if os.path.exists("gold.ico"):
-            image = Image.open("gold.ico")
-        else:
-            image = Image.new('RGB', (64, 64), color = 'red')
-
+        self.withdraw()
+        if os.path.exists("gold.ico"): image = Image.open("gold.ico")
+        else: image = Image.new('RGB', (64, 64), color = 'red')
         menu = (item('Hiện Bot', self.show_window), item('Thoát', self.quit_app))
         self.tray_icon = pystray.Icon("GoldBot", image, "Gold Pro Running...", menu)
-        
-        # [QUAN TRỌNG] CHẠY TRAY ICON Ở 1 THREAD RIÊNG BIỆT
-        # Để Main Thread của Tkinter không bị chặn -> Bot vẫn chạy ngầm được
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
